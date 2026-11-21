@@ -72,7 +72,7 @@ function createApp(): Hono {
       workosUserId: c.get("workosUserId") ?? null,
       mcpjamUserId: c.get("mcpjamUserId") ?? null,
       mcpjamOrganizationId: c.get("mcpjamOrganizationId") ?? null,
-    })
+    }),
   );
   return app;
 }
@@ -195,6 +195,34 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     expect(body.message).toMatch(/Unknown user/i);
   });
 
+  it("returns 403 without delegating when the key's owner is suspended", async () => {
+    validateApiKeyMock.mockResolvedValueOnce({
+      apiKey: { id: "api_key_suspended", owner: { id: "user_suspended" } },
+    });
+    const { ErrorCode, WebRouteError } =
+      await import("../../routes/web/errors.js");
+    resolveUserByExternalIdMock.mockRejectedValueOnce(
+      new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        "This account is suspended. Contact support.",
+        { reason: "ACCOUNT_SUSPENDED" },
+      ),
+    );
+
+    const res = await createApp().request("/test", {
+      headers: { authorization: "Bearer sk_suspended_owner" },
+    });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      code: "FORBIDDEN",
+      message: "This account is suspended. Contact support.",
+      details: { reason: "ACCOUNT_SUSPENDED" },
+    });
+    expect(lookupWorkosKeyBindingMock).not.toHaveBeenCalled();
+  });
+
   it("sets identity AND org context and calls next() on a valid, bound sk_ key", async () => {
     validateApiKeyMock.mockResolvedValueOnce({
       apiKey: { id: "api_key_42", owner: { id: "user_42" } },
@@ -263,7 +291,7 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
       c.json({
         orgId:
           (c.get("requestLogContext") as { orgId?: string })?.orgId ?? null,
-      })
+      }),
     );
 
     const res = await app.request("/test", {
@@ -520,9 +548,9 @@ describe("bearerAuthMiddleware — request-local memoization", () => {
     const res = await app.request("/test");
 
     expect(res.status).toBe(401);
-    expect((sink.ctx as { credentialPresented?: boolean }).credentialPresented).toBe(
-      false
-    );
+    expect(
+      (sink.ctx as { credentialPresented?: boolean }).credentialPresented,
+    ).toBe(false);
   });
 
   it("labels a rejected credential with credentialPresented true", async () => {
@@ -541,8 +569,8 @@ describe("bearerAuthMiddleware — request-local memoization", () => {
     });
 
     expect(res.status).toBe(401);
-    expect((sink.ctx as { credentialPresented?: boolean }).credentialPresented).toBe(
-      true
-    );
+    expect(
+      (sink.ctx as { credentialPresented?: boolean }).credentialPresented,
+    ).toBe(true);
   });
 });

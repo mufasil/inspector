@@ -32,7 +32,7 @@ describe("resolveUserByExternalId", () => {
   it("resolves { _id } from a 200 and sends the service token", async () => {
     const fetchMock = mockFetchResponse(
       200,
-      JSON.stringify({ ok: true, userId: "users_abc123" })
+      JSON.stringify({ ok: true, userId: "users_abc123" }),
     );
 
     const result = await resolveUserByExternalId("workos|user_1");
@@ -40,7 +40,7 @@ describe("resolveUserByExternalId", () => {
     expect(result).toEqual({ _id: "users_abc123" });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe(
-      `${CONVEX_HTTP_URL}/internal/v1/users/lookup-by-external-id?externalId=workos%7Cuser_1`
+      `${CONVEX_HTTP_URL}/internal/v1/users/lookup-by-external-id?externalId=workos%7Cuser_1`,
     );
     expect(init.headers["x-inspector-service-token"]).toBe(SERVICE_TOKEN);
   });
@@ -48,7 +48,7 @@ describe("resolveUserByExternalId", () => {
   it("returns null on the route's own 'User not found' 404", async () => {
     mockFetchResponse(
       404,
-      JSON.stringify({ ok: false, error: "User not found" })
+      JSON.stringify({ ok: false, error: "User not found" }),
     );
 
     await expect(resolveUserByExternalId("workos|missing")).resolves.toBeNull();
@@ -59,18 +59,45 @@ describe("resolveUserByExternalId", () => {
     mockFetchResponse(404, "No matching routes found");
 
     await expect(resolveUserByExternalId("workos|user_1")).rejects.toThrow(
-      /route not found/
+      /route not found/,
+    );
+  });
+
+  it("throws a 403 route error when the account is suspended", async () => {
+    mockFetchResponse(
+      403,
+      JSON.stringify({
+        ok: false,
+        error: "Account suspended",
+        code: "account_suspended",
+      }),
+    );
+
+    await expect(
+      resolveUserByExternalId("workos|user_1"),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "FORBIDDEN",
+      details: { reason: "ACCOUNT_SUSPENDED" },
+    });
+  });
+
+  it("throws a plain failure on a 403 that is not the suspension answer", async () => {
+    mockFetchResponse(403, "Forbidden");
+
+    await expect(resolveUserByExternalId("workos|user_1")).rejects.toThrow(
+      /User lookup failed \(403\)/,
     );
   });
 
   it("throws on other non-OK statuses", async () => {
     mockFetchResponse(
       401,
-      JSON.stringify({ ok: false, error: "Unauthorized" })
+      JSON.stringify({ ok: false, error: "Unauthorized" }),
     );
 
     await expect(resolveUserByExternalId("workos|user_1")).rejects.toThrow(
-      /User lookup failed \(401\)/
+      /User lookup failed \(401\)/,
     );
   });
 
@@ -78,7 +105,7 @@ describe("resolveUserByExternalId", () => {
     mockFetchResponse(200, JSON.stringify({ ok: true }));
 
     await expect(resolveUserByExternalId("workos|user_1")).rejects.toThrow(
-      /invalid body/
+      /invalid body/,
     );
   });
 
@@ -86,7 +113,7 @@ describe("resolveUserByExternalId", () => {
     vi.stubEnv("CONVEX_HTTP_URL", "");
 
     await expect(resolveUserByExternalId("workos|user_1")).rejects.toThrow(
-      /CONVEX_HTTP_URL/
+      /CONVEX_HTTP_URL/,
     );
   });
 });

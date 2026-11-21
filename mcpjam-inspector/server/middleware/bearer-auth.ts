@@ -1,5 +1,9 @@
 import type { Context, Next } from "hono";
-import { ErrorCode, hostedOnlyResponse } from "../routes/web/errors.js";
+import {
+  ErrorCode,
+  WebRouteError,
+  hostedOnlyResponse,
+} from "../routes/web/errors.js";
 import { validateGuestTokenDetailedAsync } from "../services/guest-token.js";
 import { getWorkOSClient } from "../services/workos-client.js";
 import { resolveUserByExternalId } from "../services/identity.js";
@@ -29,7 +33,11 @@ import {
   isDiscordServiceToken,
 } from "./surface-service-auth.js";
 import { refuseUnservableSession } from "./session-revocation.js";
-import { hasServiceCredential, isServiceCredentialUnavailableError, WORKOS_API_KEY_FEATURE } from "../services/service-credential.js";
+import {
+  hasServiceCredential,
+  isServiceCredentialUnavailableError,
+  WORKOS_API_KEY_FEATURE,
+} from "../services/service-credential.js";
 
 /**
  * The sign-out route (`routes/web/auth-session.ts`). It records the revocation
@@ -114,7 +122,7 @@ function consumeWorkOSToken(keyId: string): number | null {
   const elapsed = now - existing.lastRefill;
   const refilled = Math.min(
     WORKOS_RATE_BURST,
-    existing.tokens + elapsed * WORKOS_RATE_REFILL_PER_MS
+    existing.tokens + elapsed * WORKOS_RATE_REFILL_PER_MS,
   );
   if (refilled < 1) {
     existing.tokens = refilled;
@@ -155,7 +163,7 @@ function canValidateWorkosApiKeysHere(): boolean {
 
 export async function bearerAuthMiddleware(
   c: Context,
-  next: Next
+  next: Next,
 ): Promise<Response | void> {
   const authHeader = c.req.header("authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -168,7 +176,7 @@ export async function bearerAuthMiddleware(
     setRequestLogContext(c, { credentialPresented: false });
     return c.json(
       { code: ErrorCode.UNAUTHORIZED, message: "Bearer token required" },
-      401
+      401,
     );
   }
 
@@ -207,8 +215,7 @@ export async function bearerAuthMiddleware(
     // pay the ~200ms WorkOS validate cost. Cached per request only —
     // no cross-request cache, so revocation stays immediate.
     let validation = getRequestLocal(c, "workosApiKeyValidation") as
-      | ValidateApiKeyResult
-      | undefined;
+      ValidateApiKeyResult | undefined;
     if (!validation) {
       try {
         // ~200ms validate latency (single global WorkOS endpoint, no
@@ -229,7 +236,7 @@ export async function bearerAuthMiddleware(
         });
         return c.json(
           { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
-          401
+          401,
         );
       }
       setRequestLocal(c, "workosApiKeyValidation", validation);
@@ -238,7 +245,7 @@ export async function bearerAuthMiddleware(
     if (!validation.apiKey) {
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
-        401
+        401,
       );
     }
 
@@ -258,7 +265,7 @@ export async function bearerAuthMiddleware(
             message: "API key rate limit exceeded. Slow down and retry.",
           },
           429,
-          { "Retry-After": String(Math.ceil(waitMs / 1000)) }
+          { "Retry-After": String(Math.ceil(waitMs / 1000)) },
         );
       }
       setRequestLocal(c, "workosRateLimitConsumed", true);
@@ -271,6 +278,19 @@ export async function bearerAuthMiddleware(
       if (isServiceCredentialUnavailableError(error)) {
         return hostedOnlyResponse(c, WORKOS_API_KEY_FEATURE);
       }
+      // The owner is suspended (the backend raises the alert). The key is
+      // still live at WorkOS until the suspension's revocation reaches it,
+      // so name it in the log for whoever answers that alert.
+      if (error instanceof WebRouteError && error.status === 403) {
+        logger.warn("WorkOS API key of a suspended account refused", {
+          event: "auth.workos_api_key_suspended_account",
+          workos_key_id: workosKeyId,
+        });
+        return c.json(
+          { code: error.code, message: error.message, details: error.details },
+          403,
+        );
+      }
       logger.error(
         "Failed to resolve MCPJam user from WorkOS externalId",
         error,
@@ -278,13 +298,13 @@ export async function bearerAuthMiddleware(
       );
       return c.json(
         { code: ErrorCode.INTERNAL_ERROR, message: "Identity lookup failed" },
-        500
+        500,
       );
     }
     if (!mcpjamUser) {
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Unknown user" },
-        401
+        401,
       );
     }
 
@@ -307,7 +327,7 @@ export async function bearerAuthMiddleware(
             code: ErrorCode.INTERNAL_ERROR,
             message: "Org binding lookup failed",
           },
-          500
+          500,
         );
       }
       setRequestLocal(c, "workosApiKeyBinding", binding);
@@ -328,7 +348,7 @@ export async function bearerAuthMiddleware(
             "This API key is not bound to an organization. Re-create it from Settings → API keys.",
           details: { reason: "ORPHANED_KEY" },
         },
-        401
+        401,
       );
     }
 
@@ -353,7 +373,7 @@ export async function bearerAuthMiddleware(
             "This API key has expired. Create a new one from Settings → API keys.",
           details: { reason: "EXPIRED_KEY" },
         },
-        401
+        401,
       );
     }
 
@@ -441,7 +461,7 @@ export async function bearerAuthMiddleware(
         code: ErrorCode.UNAUTHORIZED,
         message: "Invalid or expired session token",
       },
-      401
+      401,
     );
   }
   if (verdict.kind === "keys_unavailable") {
@@ -496,7 +516,7 @@ async function authenticateAgentRegistration(
           message: "Agent rate limit exceeded. Slow down and retry.",
         },
         429,
-        { "Retry-After": String(Math.ceil(waitMs / 1000)) }
+        { "Retry-After": String(Math.ceil(waitMs / 1000)) },
       );
     }
     setRequestLocal(c, "workosRateLimitConsumed", true);
@@ -535,15 +555,19 @@ function refuseAgentRegistration(
     return hostedOnlyResponse(c, AGENT_REGISTRATION_FEATURE);
   }
   if (refusal.reason === "LOOKUP_FAILED") {
-    logger.error("Failed to resolve the caller of a WorkOS agent token", refusal.error, {
-      workos_agent_registration_id: claims.registrationId,
-    });
+    logger.error(
+      "Failed to resolve the caller of a WorkOS agent token",
+      refusal.error,
+      {
+        workos_agent_registration_id: claims.registrationId,
+      },
+    );
     return c.json(
       {
         code: ErrorCode.INTERNAL_ERROR,
         message: AGENT_REFUSAL_MESSAGES.LOOKUP_FAILED,
       },
-      500
+      500,
     );
   }
   logger.info("WorkOS agent token refused", {
@@ -559,7 +583,7 @@ function refuseAgentRegistration(
       message: AGENT_REFUSAL_MESSAGES[refusal.reason],
       details: { reason: refusal.reason },
     },
-    401
+    401,
   );
 }
 
@@ -572,7 +596,7 @@ const KEYS_UNAVAILABLE_WARN_INTERVAL_MS = 60_000;
 let lastKeysUnavailableWarnAt = 0;
 
 function warnAuthKitKeysUnavailable(
-  verdict: Extract<AuthKitBearerVerdict, { kind: "keys_unavailable" }>
+  verdict: Extract<AuthKitBearerVerdict, { kind: "keys_unavailable" }>,
 ): void {
   const now = Date.now();
   if (now - lastKeysUnavailableWarnAt < KEYS_UNAVAILABLE_WARN_INTERVAL_MS) {
@@ -585,7 +609,7 @@ function warnAuthKitKeysUnavailable(
       event: "auth.authkit_jwks_unavailable",
       issuer: verdict.issuer,
       reason: verdict.reason,
-    }
+    },
   );
 }
 
