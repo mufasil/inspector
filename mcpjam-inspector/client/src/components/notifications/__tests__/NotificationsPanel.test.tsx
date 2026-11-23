@@ -181,4 +181,32 @@ describe("NotificationsPanelContent", () => {
     expect(markAsRead).toHaveBeenCalledWith({ notificationId: "n-access" });
     expect(window.location.pathname).toBe("/access-requests/req_1");
   });
+
+  it("opens the access request page from a request to join the organization", () => {
+    const markAsRead = vi.fn();
+    mockUseNotificationMutations.mockReturnValue({
+      markAsRead,
+      markAllAsRead: vi.fn(),
+      clearAllNotifications: vi.fn(),
+    });
+    window.history.replaceState({}, "", "/");
+    const { container } = renderWith([
+      notification({
+        _id: "n-join",
+        type: "organization_access_requested",
+        entityId: "req_1",
+        entityName: "Acme",
+        actorName: "Jo Chen",
+      }),
+    ]);
+
+    const row = screen.getByRole("link", {
+      name: /Jo Chen asked to join organization "Acme"/,
+    });
+    expect(container.querySelector(".bg-primary\\/10")).not.toBeNull();
+    expect(container.querySelector(".lucide-building-2")).not.toBeNull();
+    fireEvent.click(row);
+    expect(markAsRead).toHaveBeenCalledWith({ notificationId: "n-join" });
+    expect(window.location.pathname).toBe("/access-requests/req_1");
+  });
 });

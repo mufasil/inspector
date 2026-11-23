@@ -84,6 +84,14 @@ export const NOT_EXPOSED: Readonly<Record<string, string>> = {
     "Organization security setting; agents see its effect when a credential delivery is refused",
   "credentials:setCredentialExportPolicy":
     "Organization security setting that controls where credentials can go; only admins change it, in the app",
+  "workOrganizations:getSignupCompanyStep":
+    "Onboarding and settings UI; agent routes later",
+  "workOrganizations:resolveSignupCompany":
+    "Onboarding and settings UI; agent routes later",
+  "workOrganizations:completeCompanyStep":
+    "Onboarding and settings UI; agent routes later",
+  "projectAccessRequests:listForOrganization":
+    "Onboarding and settings UI; agent routes later",
 };
 
 /**
